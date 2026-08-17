@@ -1,11 +1,9 @@
 export type Exchange = "NSE" | "BSE";
 
-export type ListedCompany = {
+export type Company = {
   name: string;
-  ticker: string;
+  nseTicker: string | null;
+  bseTicker: string | null;
+  bseCode: string | null;
   sector: string;
-};
-
-export type CompanyListing = ListedCompany & {
-  exchange: Exchange;
 };

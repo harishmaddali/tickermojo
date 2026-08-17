@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { companyHref } from "@/lib/exchanges";
-import type { CompanyListing } from "@/lib/types";
+import { bseHref, companyHref, tickerHref } from "@/lib/exchanges";
+import type { Company } from "@/lib/types";
 
 const PAGE_SIZE = 50;
 
-export function CompanyTable({ companies }: { companies: CompanyListing[] }) {
+export function CompanyTable({ companies }: { companies: Company[] }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
@@ -20,7 +20,9 @@ export function CompanyTable({ companies }: { companies: CompanyListing[] }) {
     return companies.filter((company) => {
       return (
         company.name.toLowerCase().includes(needle) ||
-        company.ticker.toLowerCase().includes(needle) ||
+        company.nseTicker?.toLowerCase().includes(needle) ||
+        company.bseTicker?.toLowerCase().includes(needle) ||
+        company.bseCode?.includes(needle) ||
         company.sector.toLowerCase().includes(needle)
       );
     });
@@ -75,38 +77,50 @@ export function CompanyTable({ companies }: { companies: CompanyListing[] }) {
                 </td>
               </tr>
             ) : (
-              visible.map((company) => (
-                <tr
-                  key={`${company.exchange}-${company.ticker}`}
-                  className="border-t border-[var(--line)] hover:bg-[var(--row-hover)]"
-                >
-                  <td className="px-5 py-3">
-                    <Link
-                      href={companyHref(company.exchange, company.ticker)}
-                      className="font-medium text-[var(--foreground)] hover:underline"
-                    >
-                      {company.name}
-                    </Link>
-                  </td>
-                  <td className="px-5 py-3 font-mono text-[13px]">
-                    {company.exchange === "NSE" ? (
-                      <TickerLink exchange="NSE" ticker={company.ticker} />
-                    ) : (
-                      <span className="text-[var(--muted)]">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 font-mono text-[13px]">
-                    {company.exchange === "BSE" ? (
-                      <TickerLink exchange="BSE" ticker={company.ticker} />
-                    ) : (
-                      <span className="text-[var(--muted)]">—</span>
-                    )}
-                  </td>
-                  <td className="px-5 py-3 text-[var(--muted)]">
-                    {company.sector}
-                  </td>
-                </tr>
-              ))
+              visible.map((company) => {
+                const href = companyHref(company);
+                const bseLink = bseHref(company);
+                return (
+                  <tr
+                    key={`${company.nseTicker ?? ""}-${company.bseCode ?? company.bseTicker ?? ""}-${company.name}`}
+                    className="border-t border-[var(--line)] hover:bg-[var(--row-hover)]"
+                  >
+                    <td className="px-5 py-3">
+                      <Link
+                        href={href}
+                        className="font-medium text-[var(--foreground)] hover:underline"
+                      >
+                        {company.name}
+                      </Link>
+                    </td>
+                    <td className="px-5 py-3 font-mono text-[13px]">
+                      {company.nseTicker ? (
+                        <TickerLink
+                          href={tickerHref("NSE", company.nseTicker)}
+                          ticker={company.nseTicker}
+                          tone="nse"
+                        />
+                      ) : (
+                        <span className="text-[var(--muted)]">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 font-mono text-[13px]">
+                      {company.bseTicker && bseLink ? (
+                        <TickerLink
+                          href={bseLink}
+                          ticker={company.bseTicker}
+                          tone="bse"
+                        />
+                      ) : (
+                        <span className="text-[var(--muted)]">—</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-[var(--muted)]">
+                      {company.sector}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -140,17 +154,19 @@ export function CompanyTable({ companies }: { companies: CompanyListing[] }) {
 }
 
 function TickerLink({
-  exchange,
+  href,
   ticker,
+  tone,
 }: {
-  exchange: CompanyListing["exchange"];
+  href: string;
   ticker: string;
+  tone: "nse" | "bse";
 }) {
   return (
     <Link
-      href={companyHref(exchange, ticker)}
+      href={href}
       className={
-        exchange === "NSE"
+        tone === "nse"
           ? "rounded bg-[var(--nse-soft)] px-1.5 py-0.5 font-medium text-[var(--nse)]"
           : "rounded bg-[var(--bse-soft)] px-1.5 py-0.5 font-medium text-[var(--bse)]"
       }

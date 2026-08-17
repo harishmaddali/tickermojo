@@ -16,7 +16,7 @@ export default async function NsePage() {
       <PageIntro
         eyebrow="National Stock Exchange"
         title="NSE tickers"
-        description="Companies listed on NSE, with their trading symbols."
+        description="Companies listed on NSE. BSE tickers are shown when the same company also trades there."
       />
       <CompanyTable companies={companies} />
     </>

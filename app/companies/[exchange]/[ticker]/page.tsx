@@ -25,9 +25,10 @@ export async function generateMetadata({
     return { title: "Company not found" };
   }
 
+  const symbol = company.nseTicker || company.bseTicker || ticker;
   return {
-    title: `${company.ticker} · ${company.name}`,
-    description: `${company.name} listed on ${company.exchange} with ticker ${company.ticker}.`,
+    title: `${symbol} · ${company.name}`,
+    description: `${company.name} listed on the Indian stock market.`,
   };
 }
 
@@ -43,12 +44,15 @@ export default async function CompanyPage({ params }: PageProps) {
     notFound();
   }
 
-  const isNse = company.exchange === "NSE";
+  const listings = [
+    company.nseTicker && "NSE",
+    company.bseTicker && "BSE",
+  ].filter(Boolean);
 
   return (
     <article className="mx-auto max-w-2xl">
       <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--muted)]">
-        {company.exchange} listed
+        {listings.join(" and ")} listed
       </p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight">
         {company.name}
@@ -56,24 +60,21 @@ export default async function CompanyPage({ params }: PageProps) {
       <p className="mt-2 text-[var(--muted)]">{company.sector}</p>
 
       <dl className="mt-8 grid gap-4 sm:grid-cols-2">
-        <TickerCard
-          label="NSE ticker"
-          value={isNse ? company.ticker : null}
-          tone="nse"
-        />
-        <TickerCard
-          label="BSE ticker"
-          value={isNse ? null : company.ticker}
-          tone="bse"
-        />
+        <TickerCard label="NSE ticker" value={company.nseTicker} tone="nse" />
+        <TickerCard label="BSE ticker" value={company.bseTicker} tone="bse" />
       </dl>
+      {company.bseCode ? (
+        <p className="mt-4 font-mono text-sm text-[var(--muted)]">
+          BSE scrip code {company.bseCode}
+        </p>
+      ) : null}
 
       <p className="mt-8">
         <Link
-          href={isNse ? "/nse" : "/bse"}
+          href="/"
           className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] hover:underline"
         >
-          Back to {company.exchange} companies
+          Back to all companies
         </Link>
       </p>
     </article>

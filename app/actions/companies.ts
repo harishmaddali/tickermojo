@@ -3,62 +3,63 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { cache } from "react";
-import type { CompanyListing, Exchange, ListedCompany } from "@/lib/types";
+import type { Company, Exchange } from "@/lib/types";
 
 const dataDir = path.join(process.cwd(), "data");
 
-const loadListedCompanies = cache(
-  async (exchange: Exchange): Promise<ListedCompany[]> => {
-    const filename =
-      exchange === "NSE" ? "nse-companies.json" : "bse-companies.json";
-    const raw = await readFile(path.join(dataDir, filename), "utf8");
-    return JSON.parse(raw) as ListedCompany[];
-  },
-);
+const loadCompanies = cache(async (): Promise<Company[]> => {
+  const raw = await readFile(path.join(dataDir, "companies.json"), "utf8");
+  return JSON.parse(raw) as Company[];
+});
 
-function withExchange(
-  companies: ListedCompany[],
-  exchange: Exchange,
-): CompanyListing[] {
-  return companies.map((company) => ({ ...company, exchange }));
+export async function getAllCompanies(): Promise<Company[]> {
+  return loadCompanies();
 }
 
 export async function getCompaniesByExchange(
   exchange: Exchange,
-): Promise<CompanyListing[]> {
-  const companies = await loadListedCompanies(exchange);
-  return withExchange(companies, exchange);
-}
-
-export async function getAllCompanies(): Promise<CompanyListing[]> {
-  const [nse, bse] = await Promise.all([
-    getCompaniesByExchange("NSE"),
-    getCompaniesByExchange("BSE"),
-  ]);
-
-  return [...nse, ...bse].sort((a, b) => a.name.localeCompare(b.name));
+): Promise<Company[]> {
+  const companies = await loadCompanies();
+  return companies.filter((company) =>
+    exchange === "NSE" ? company.nseTicker : company.bseTicker,
+  );
 }
 
 export async function getCompany(
   exchange: Exchange,
   ticker: string,
-): Promise<CompanyListing | null> {
-  const companies = await loadListedCompanies(exchange);
-  const match = companies.find(
-    (company) => company.ticker.toUpperCase() === ticker.toUpperCase(),
+): Promise<Company | null> {
+  const companies = await loadCompanies();
+  const needle = ticker.toUpperCase();
+
+  if (exchange === "NSE") {
+    return (
+      companies.find((company) => company.nseTicker === needle) ?? null
+    );
+  }
+
+  return (
+    companies.find((company) => company.bseCode === needle) ??
+    companies.find(
+      (company) => company.bseTicker === needle && !company.bseCode,
+    ) ??
+    companies.find((company) => company.bseTicker === needle) ??
+    null
   );
-  return match ? { ...match, exchange } : null;
 }
 
 export async function getMarketStats() {
-  const [nse, bse] = await Promise.all([
-    loadListedCompanies("NSE"),
-    loadListedCompanies("BSE"),
-  ]);
+  const companies = await loadCompanies();
+  const nse = companies.filter((company) => company.nseTicker).length;
+  const bse = companies.filter((company) => company.bseTicker).length;
+  const dual = companies.filter(
+    (company) => company.nseTicker && company.bseTicker,
+  ).length;
 
   return {
-    nse: nse.length,
-    bse: bse.length,
-    total: nse.length + bse.length,
+    total: companies.length,
+    nse,
+    bse,
+    dual,
   };
 }

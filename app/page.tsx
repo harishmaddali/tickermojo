@@ -13,12 +13,13 @@ export default async function HomePage() {
       <PageIntro
         eyebrow="India"
         title="Listed companies"
-        description="Every company in the TickerMojo universe with its NSE or BSE ticker. Search by name, symbol, or sector."
+        description="Each company appears once, with NSE and BSE tickers filled in when the stock is listed on that exchange."
       >
-        <dl className="grid grid-cols-3 gap-4 text-sm">
+        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <Stat label="Total" value={stats.total} />
           <Stat label="NSE" value={stats.nse} />
           <Stat label="BSE" value={stats.bse} />
+          <Stat label="Both" value={stats.dual} />
         </dl>
       </PageIntro>
       <CompanyTable companies={companies} />
