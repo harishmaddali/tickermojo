@@ -2,6 +2,7 @@ import Link from "next/link";
 
 const nav = [
   { href: "/", label: "All companies" },
+  { href: "/blue-chip", label: "Blue chip" },
   { href: "/nse", label: "NSE" },
   { href: "/bse", label: "BSE" },
 ];
