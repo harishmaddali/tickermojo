@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /**
  * Fetches latest financial summaries for Nifty 50 blue-chip companies
- * from Screener.in (public pages).
+ * from the Bombay Stock Exchange (BSE) India public APIs.
+ *
+ * Data sources per company:
+ * - getScripHeaderData: live current price and company name
+ * - ListofScripData: market cap, face value, ISIN, BSE company page URL
+ * - TabResults?tabtype=RESULTS: latest annual revenue, net profit, EPS, OPM %
  */
 
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /** Nifty 50 constituents (TMCV replaced TATAMOTORS after the 2025 demerger). */
@@ -62,133 +67,193 @@ const BLUE_CHIP_TICKERS = [
 ];
 
 const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const REFERER = "https://www.bseindia.com/";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function stripHtml(value) {
-  return value.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
-}
-
-function normalizeValue(value) {
-  return value ? value.replace(/\s+/g, " ").trim() : null;
-}
-
-function parseRatios(html) {
-  const ratios = {};
-  const items = html.matchAll(
-    /<li[^>]*>[\s\S]*?<span class="name">([\s\S]*?)<\/span>[\s\S]*?<span class="[^"]*value[^"]*">([\s\S]*?)<\/span>[\s\S]*?<\/li>/g,
-  );
-  for (const [, rawName, rawValue] of items) {
-    const name = stripHtml(rawName);
-    const value = stripHtml(rawValue);
-    if (name) ratios[name] = value;
-  }
-  return ratios;
-}
-
-function parseCompanyName(html) {
-  const match = html.match(/<h1[^>]*>\s*([^<]+?)\s*<\/h1>/);
-  return match ? match[1].trim() : null;
-}
-
-function parseAnnualProfitLoss(html) {
-  const tables = [...html.matchAll(/<table[^>]*>([\s\S]*?)<\/table>/gi)];
-
-  for (const [, table] of tables) {
-    const headerRow = table.match(/<thead>[\s\S]*?<tr>([\s\S]*?)<\/tr>/i);
-    if (!headerRow) continue;
-
-    const years = [...headerRow[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map(
-      (m) => stripHtml(m[1]),
-    );
-
-    if (!years.some((year) => /^Mar \d{4}$/.test(year))) continue;
-
-    const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
-    const metrics = {};
-
-    for (const row of rows) {
-      const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
-        (m) => stripHtml(m[1]),
-      );
-      if (cells.length < 2) continue;
-
-      const label = cells[0].replace(/\s*\+$/, "").trim();
-      if (!label) continue;
-
-      const values = {};
-      for (let i = 1; i < cells.length && i - 1 < years.length; i++) {
-        const year = years[i - 1];
-        if (year && /^Mar \d{4}$/.test(year)) {
-          values[year] = cells[i];
-        }
-      }
-      metrics[label] = values;
-    }
-
-    if (Object.keys(metrics).length > 0) {
-      return { years: years.filter((y) => /^Mar \d{4}$/.test(y)), metrics };
-    }
-  }
-
-  return null;
-}
-
-async function fetchCompany(ticker) {
-  const url = `https://www.screener.in/company/${ticker}/consolidated/`;
+async function fetchJson(url) {
   const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
+    headers: {
+      "User-Agent": USER_AGENT,
+      Referer: REFERER,
+    },
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${ticker}`);
+    throw new Error(`HTTP ${response.status} for ${url}`);
   }
 
-  const html = await response.text();
-  const ratios = parseRatios(html);
-  const name = parseCompanyName(html);
-  const annual = parseAnnualProfitLoss(html);
+  const text = await response.text();
+  // Some BSE endpoints return a JSON-encoded JSON string.
+  let data = text;
+  while (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      break;
+    }
+  }
+  return data;
+}
 
-  const latestYear = annual?.years.at(-1) ?? null;
+function parseNumber(value) {
+  if (value === null || value === undefined || value === "--" || value === "") {
+    return null;
+  }
+  const cleaned = String(value).replace(/,/g, "").replace(/[\s₹Cr]/gi, "").trim();
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+}
 
-  const getMetric = (label) => {
-    if (!annual?.metrics[label] || !latestYear) return null;
-    return annual.metrics[label][latestYear] ?? null;
-  };
+function formatCurrency(value) {
+  if (value === null || value === undefined) return null;
+  const num = parseNumber(value);
+  if (num === null) return String(value).trim() || null;
+  return `₹ ${num.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatValue(value, { fractionDigits = 2 } = {}) {
+  if (value === null || value === undefined) return null;
+  const num = parseNumber(value);
+  if (num === null) return String(value).trim() || null;
+  return num.toLocaleString("en-IN", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+}
+
+async function fetchHeader(scripCode) {
+  const url =
+    "https://api.bseindia.com/BseIndiaAPI/api/getScripHeaderData/w?Debtflag=&scripcode=" +
+    encodeURIComponent(scripCode) +
+    "&seriesid=";
+  return fetchJson(url);
+}
+
+async function fetchListData(scripCode) {
+  const url =
+    "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w?scripcode=" +
+    encodeURIComponent(scripCode) +
+    "&Group=&segment=Equity&status=Active";
+  const data = await fetchJson(url);
+  return Array.isArray(data) ? data[0] : null;
+}
+
+async function fetchTabResults(scripCode) {
+  const url =
+    "https://api.bseindia.com/BseIndiaAPI/api/TabResults/w?scripcode=" +
+    encodeURIComponent(scripCode) +
+    "&tabtype=RESULTS";
+  const data = await fetchJson(url);
+  if (!data || !Array.isArray(data.resultinCr)) return null;
+  return data;
+}
+
+function getTabMetric(tabResults, titleRe) {
+  const row = tabResults.resultinCr.find((r) => titleRe.test(r.title));
+  return row?.v3 ?? null;
+}
+
+async function fetchCompany(ticker, bseCode) {
+  const [header, listData, tabResults] = await Promise.all([
+    fetchHeader(bseCode),
+    fetchListData(bseCode),
+    fetchTabResults(bseCode),
+  ]);
+
+  const name =
+    header?.Cmpname?.FullN ??
+    listData?.Issuer_Name ??
+    listData?.Scrip_Name ??
+    null;
+
+  const currentPriceRaw =
+    header?.CurrRate?.LTP ?? header?.Header?.LTP ?? null;
+
+  const marketCapRaw = listData?.Mktcap ?? null;
+  const faceValueRaw = listData?.FACE_VALUE ?? null;
+  const sourceUrl =
+    listData?.NSURL ??
+    (header?.Cmpname?.SEOUrlEQ
+      ? `https://www.bseindia.com${header.Cmpname.SEOUrlEQ}`
+      : `https://www.bseindia.com/stock-share-price/${bseCode}`);
+
+  const fiscalYear = tabResults?.col4 ?? null;
+  const revenue = getTabMetric(tabResults, /^Revenue$/i);
+  const netProfit = getTabMetric(tabResults, /^Net Profit$/i);
+  const eps = getTabMetric(tabResults, /^EPS$/i);
+  const opmPercent = getTabMetric(tabResults, /^OPM %$/i);
+
+  let peRatio = null;
+  const priceNum = parseNumber(currentPriceRaw);
+  const epsNum = parseNumber(eps);
+  if (priceNum !== null && epsNum !== null && epsNum > 0) {
+    peRatio = (priceNum / epsNum).toFixed(2);
+  }
 
   return {
     ticker,
     name,
-    sourceUrl: url,
-    currentPrice: normalizeValue(ratios["Current Price"]),
-    marketCap: normalizeValue(ratios["Market Cap"]),
-    peRatio: normalizeValue(ratios["Stock P/E"]),
-    bookValue: normalizeValue(ratios["Book Value"]),
-    dividendYield: normalizeValue(ratios["Dividend Yield"]),
-    roce: normalizeValue(ratios["ROCE"]),
-    roe: normalizeValue(ratios["ROE"]),
-    faceValue: normalizeValue(ratios["Face Value"]),
-    fiscalYear: latestYear,
-    revenue: getMetric("Sales") ?? getMetric("Revenue") ?? null,
-    netProfit: getMetric("Net Profit") ?? null,
-    operatingProfit: getMetric("Operating Profit") ?? null,
-    opmPercent: getMetric("OPM %") ?? null,
-    eps: getMetric("EPS in Rs") ?? null,
+    sourceUrl,
+    currentPrice: formatCurrency(currentPriceRaw),
+    marketCap: marketCapRaw ? `₹ ${formatValue(marketCapRaw)} Cr` : null,
+    peRatio,
+    bookValue: null,
+    dividendYield: null,
+    roce: null,
+    roe: null,
+    faceValue: faceValueRaw ? formatCurrency(faceValueRaw) : null,
+    fiscalYear,
+    revenue: formatValue(revenue, { fractionDigits: 2 }),
+    netProfit: formatValue(netProfit, { fractionDigits: 2 }),
+    operatingProfit: null,
+    opmPercent: formatValue(opmPercent, { fractionDigits: 2 }),
+    eps: formatValue(eps, { fractionDigits: 2 }),
     fetchedAt: new Date().toISOString(),
   };
 }
 
+function findBseCode(ticker, companies) {
+  const byNse = companies.find((c) => c.nseTicker === ticker);
+  if (byNse?.bseCode) return byNse.bseCode;
+
+  const byBse = companies.find((c) => c.bseTicker === ticker);
+  if (byBse?.bseCode) return byBse.bseCode;
+
+  // Fallback for companies known by a substring in their name.
+  const byName = companies.find((c) =>
+    c.name?.toLowerCase().includes(ticker.toLowerCase())
+  );
+  if (byName?.bseCode) return byName.bseCode;
+
+  return null;
+}
+
 async function main() {
+  const companies = JSON.parse(
+    await readFile(
+      new URL("../data/companies.json", import.meta.url),
+      "utf8"
+    )
+  );
+
   const results = [];
   const errors = [];
 
   for (const ticker of BLUE_CHIP_TICKERS) {
     try {
       process.stdout.write(`Fetching ${ticker}... `);
-      const record = await fetchCompany(ticker);
+      const bseCode = findBseCode(ticker, companies);
+      if (!bseCode) {
+        throw new Error(`No BSE scrip code found for ${ticker}`);
+      }
+      const record = await fetchCompany(ticker, bseCode);
       results.push(record);
       console.log("ok");
     } catch (error) {
@@ -196,7 +261,7 @@ async function main() {
       console.log(`failed: ${message}`);
       errors.push({ ticker, error: message });
     }
-    await sleep(800);
+    await sleep(400);
   }
 
   const output = {
@@ -207,13 +272,13 @@ async function main() {
     records: results,
     errors,
     generatedAt: new Date().toISOString(),
-    source: "screener.in",
+    source: "BSE India",
   };
 
   const outPath = path.join(
     process.cwd(),
     "data",
-    "blue-chip-financials.json",
+    "blue-chip-financials.json"
   );
   await writeFile(outPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
   console.log(`\nWrote ${results.length} records to ${outPath}`);

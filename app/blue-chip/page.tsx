@@ -33,13 +33,13 @@ export default async function BlueChipPage() {
       <p className="mb-6 text-sm text-[var(--muted)]">
         Figures sourced from{" "}
         <a
-          href="https://www.screener.in"
+          href="https://www.bseindia.com"
           className="underline hover:text-[var(--foreground)]"
         >
-          Screener.in
+          BSE India
         </a>{" "}
-        consolidated statements. Revenue and profit are in ₹ crore for the
-        latest annual fiscal year. Last updated {generated} IST.
+        financial results. Revenue and profit are in ₹ crore for the latest
+        annual fiscal year. Last updated {generated} IST.
       </p>
 
       <BlueChipTable records={data.records} />
